@@ -1,7 +1,8 @@
 import type { AnalysisEngine, AnalyzeIssueInput, AnalyzeIssueOutput } from "@/types/civic";
 import { analyzeIssue } from "@/lib/analyzer";
 
-const GEMMA_MODEL = process.env.GEMMA_MODEL || "gemma-3-27b-it";
+const GEMMA_MODEL = process.env.GEMMA_MODEL || "gemma-4-e2b-it";
+const GEMMA_BASE_URL = (process.env.GEMMA_BASE_URL || "http://127.0.0.1:8081/v1").replace(/\/$/, "");
 
 const GEMMA_SYSTEM_PROMPT = `You are ParaReport's civic issue analyzer for Kolkata.
 
@@ -39,44 +40,41 @@ export async function analyzeReport(
   input: AnalyzeIssueInput,
   photo?: { base64: string; mimeType: string }
 ): Promise<AnalysisResult> {
-  const apiKey = process.env.GEMMA_API_KEY || process.env.GOOGLE_API_KEY;
+  const enabled = process.env.GEMMA_ENABLED !== "false";
 
-  if (!apiKey) {
+  if (!enabled) {
     return { output: analyzeIssue(input), engine: "rules" };
   }
 
   try {
-    const parts: Array<Record<string, unknown>> = [
-      { text: `${GEMMA_SYSTEM_PROMPT}\n\nInput JSON:\n${JSON.stringify(input)}` }
-    ];
+    const photoHint = photo
+      ? `\nPhoto: a citizen attached a ${photo.mimeType} image, but this local text model cannot inspect pixels. Use the report text, location, and this attachment hint only.`
+      : "";
 
-    if (photo) {
-      parts.push({ inline_data: { mime_type: photo.mimeType, data: photo.base64 } });
-    }
-
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${GEMMA_MODEL}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          "x-goog-api-key": apiKey
-        },
-        body: JSON.stringify({
-          contents: [{ role: "user", parts }],
-          generationConfig: { temperature: 0.2 }
-        }),
-        signal: AbortSignal.timeout(30_000)
-      }
-    );
+    const response = await fetch(`${GEMMA_BASE_URL}/chat/completions`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json"
+      },
+      body: JSON.stringify({
+        model: GEMMA_MODEL,
+        messages: [
+          { role: "system", content: GEMMA_SYSTEM_PROMPT },
+          { role: "user", content: `Input JSON:\n${JSON.stringify(input)}${photoHint}` }
+        ],
+        temperature: 0.2,
+        max_tokens: 1200
+      }),
+      signal: AbortSignal.timeout(45_000)
+    });
 
     if (!response.ok) {
-      console.error(`Gemma API error ${response.status}; falling back to rules engine`);
+      console.error(`Local Gemma error ${response.status}; falling back to rules engine`);
       return { output: analyzeIssue(input), engine: "rules" };
     }
 
     const json = await response.json();
-    const text = json?.candidates?.[0]?.content?.parts?.[0]?.text;
+    const text = json?.choices?.[0]?.message?.content;
 
     if (typeof text !== "string") {
       return { output: analyzeIssue(input), engine: "rules" };
@@ -90,12 +88,12 @@ export async function analyzeReport(
 
     return { output: normalizeGemmaOutput(candidate, input), engine: "gemma" };
   } catch (error) {
-    console.error("Gemma analysis failed; falling back to rules engine", error);
+    console.error("Local Gemma analysis failed; falling back to rules engine", error);
     return { output: analyzeIssue(input), engine: "rules" };
   }
 }
 
-// Gemma models don't support responseMimeType, so tolerate fenced or prefixed JSON.
+// llama.cpp may return fenced or prefixed JSON depending on the chat template.
 function extractJson(text: string): Partial<AnalyzeIssueOutput> | undefined {
   const match = text.match(/\{[\s\S]*\}/);
 

@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "next dev",
+    "gemma:serve": "llama-server --model ${GEMMA_GGUF_PATH:-/Users/kanishk/Downloads/gemma-4-E2B-it-Q4_K_M.gguf} --alias ${GEMMA_MODEL:-gemma-4-e2b-it} --host 127.0.0.1 --port ${GEMMA_PORT:-8081} --ctx-size ${GEMMA_CTX_SIZE:-4096} --reasoning off",
     "build": "next build",
     "start": "next start",
     "lint": "eslint .",
