@@ -1,37 +1,21 @@
 "use client";
 
+import { useState } from "react";
 import type { CivicReceipt } from "@/types/civic";
 import { getModeConfig, modeColorStyle } from "@/lib/modes";
 import { RiskFlagList } from "@/components/RiskFlagList";
 import { SeverityBadge } from "@/components/SeverityBadge";
 
 type CivicReceiptCardProps = {
-  receipt?: CivicReceipt;
+  receipt: CivicReceipt;
+  issueId: string;
 };
 
-export function CivicReceiptCard({ receipt }: CivicReceiptCardProps) {
-  if (!receipt) {
-    return (
-      <section className="receipt empty-receipt">
-        <span className="receipt-kicker">Civic receipt preview</span>
-        <h2>Analyze a report to generate a structured packet.</h2>
-        <p>
-          The receipt will show mode, severity, risk flags, department routing,
-          citizen actions, volunteer checklist, Bengali share text, and an
-          official English complaint.
-        </p>
-      </section>
-    );
-  }
-
+export function CivicReceiptCard({ receipt, issueId }: CivicReceiptCardProps) {
   const mode = getModeConfig(receipt.mode);
 
-  async function copyText(value: string) {
-    await navigator.clipboard.writeText(value);
-  }
-
   return (
-    <section className="receipt" style={modeColorStyle(receipt.mode)}>
+    <article className="receipt" style={modeColorStyle(receipt.mode)}>
       <div className="receipt-header">
         <div>
           <span className="receipt-kicker">Civic receipt</span>
@@ -52,12 +36,12 @@ export function CivicReceiptCard({ receipt }: CivicReceiptCardProps) {
         </div>
       ) : null}
 
-      <div className="receipt-grid">
-        <div>
+      <div className="receipt-signal-row">
+        <div className="receipt-signal">
           <h3>Risk flags</h3>
           <RiskFlagList flags={receipt.riskFlags} />
         </div>
-        <div>
+        <div className="receipt-signal">
           <h3>Departments</h3>
           <ul className="plain-list">
             {receipt.departmentSuggestions.map((department) => (
@@ -67,31 +51,19 @@ export function CivicReceiptCard({ receipt }: CivicReceiptCardProps) {
         </div>
       </div>
 
-      <div className="receipt-grid">
+      <div className="receipt-actions-panel">
         <ActionList title="Citizen safe actions" actions={receipt.citizenSafeActions} />
         <ActionList title="Volunteer / club checklist" actions={receipt.volunteerActions} />
       </div>
 
-      <div className="text-packet">
-        <div className="packet-heading">
-          <h3>Official English complaint</h3>
-          <button type="button" onClick={() => copyText(receipt.officialEnglishComplaint)}>
-            Copy
-          </button>
-        </div>
-        <p>{receipt.officialEnglishComplaint}</p>
-      </div>
+      <TextPacket label="Official English complaint" text={receipt.officialEnglishComplaint} />
+      <TextPacket label="Bengali share text" text={receipt.bengaliShareText} whatsapp />
+      {receipt.hindiShareText ? (
+        <TextPacket label="Hindi share text" text={receipt.hindiShareText} whatsapp />
+      ) : null}
 
-      <div className="text-packet bengali">
-        <div className="packet-heading">
-          <h3>Bengali share text</h3>
-          <button type="button" onClick={() => copyText(receipt.bengaliShareText)}>
-            Copy
-          </button>
-        </div>
-        <p>{receipt.bengaliShareText}</p>
-      </div>
-    </section>
+      <ShareRow issueId={issueId} />
+    </article>
   );
 }
 
@@ -104,6 +76,62 @@ function ActionList({ title, actions }: { title: string; actions: string[] }) {
           <li key={action}>{action}</li>
         ))}
       </ul>
+    </div>
+  );
+}
+
+function TextPacket({ label, text, whatsapp }: { label: string; text: string; whatsapp?: boolean }) {
+  return (
+    <details className="text-packet">
+      <summary>{label}</summary>
+      <p>{text}</p>
+      <div className="packet-actions">
+        <CopyButton text={text} />
+        {whatsapp ? (
+          <a
+            className="quiet-action"
+            href={`https://wa.me/?text=${encodeURIComponent(text)}`}
+            target="_blank"
+            rel="noopener noreferrer"
+          >
+            Share on WhatsApp
+          </a>
+        ) : null}
+      </div>
+    </details>
+  );
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copy() {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <button type="button" className="quiet-action" onClick={copy}>
+      {copied ? "Copied" : "Copy"}
+    </button>
+  );
+}
+
+function ShareRow({ issueId }: { issueId: string }) {
+  const [copied, setCopied] = useState(false);
+
+  async function copyLink() {
+    await navigator.clipboard.writeText(`${window.location.origin}/issues/${issueId}`);
+    setCopied(true);
+    window.setTimeout(() => setCopied(false), 1500);
+  }
+
+  return (
+    <div className="share-row">
+      <button type="button" className="quiet-action" onClick={copyLink}>
+        {copied ? "Link copied" : "Copy public link"}
+      </button>
     </div>
   );
 }

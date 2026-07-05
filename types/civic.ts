@@ -19,6 +19,8 @@ export type IssueStatus =
   | "duplicate"
   | "archived";
 
+export type AnalysisEngine = "gemma" | "rules";
+
 export type CivicIssue = {
   id: string;
   title: string;
@@ -44,6 +46,32 @@ export type CivicIssue = {
   verificationCount: number;
   unresolvedConfirmations: number;
   fixedProofUrl?: string;
+  receipt: CivicReceipt;
+  analysisEngine: AnalysisEngine;
+  isSeed: boolean;
+};
+
+export type ClusterSummary = {
+  groupId: string;
+  reportCount: number;
+  unresolvedConfirmations: number;
+  firstReportedAt: string;
+  lastReportedAt: string;
+  locationText: string;
+  title: string;
+  severity: Severity;
+  mode: SeasonalModeId;
+};
+
+export type DashboardStats = {
+  totalIssues: number;
+  openIssues: number;
+  criticalOpen: number;
+  fixedIssues: number;
+  reportsLast7Days: number;
+  byMode: Array<{ mode: SeasonalModeId; open: number; total: number }>;
+  topClusters: ClusterSummary[];
+  topUnresolved: CivicIssue[];
 };
 
 export type CivicReceipt = {
@@ -110,18 +138,9 @@ export type DemoScenario = {
   text: string;
 };
 
-export type CivicIntelligence = {
-  triageScore: number;
-  confidenceScore: number;
-  packetReadiness: number;
-  queueLabel: string;
-  modeRationale: string;
-  duplicateInsight: string;
-  nextBestAction: string;
-  impactRadius: string;
-  timeSensitivity: string;
-  escalationPath: string[];
-  evidenceChecks: string[];
-  privacyRedactions: string[];
-  exportFormats: string[];
+export type ReportSubmissionResult = {
+  issue: CivicIssue;
+  receipt: CivicReceipt;
+  cluster?: ClusterSummary;
+  analysisEngine: AnalysisEngine;
 };

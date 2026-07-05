@@ -1,83 +1,77 @@
 "use client";
 
 import Image from "next/image";
-import { useState } from "react";
-import type { AnalyzeIssueInput, DemoScenario, SeasonalModeId } from "@/types/civic";
+import { useRef, useState } from "react";
+import type { DemoScenario, SeasonalModeId } from "@/types/civic";
 import { demoScenarios } from "@/lib/demoScenarios";
 import { getModeConfig } from "@/lib/modes";
 
 type ReportFormProps = {
   selectedMode: SeasonalModeId;
   onModeChange: (mode: SeasonalModeId) => void;
-  onAnalyze: (input: AnalyzeIssueInput) => Promise<void>;
-  isAnalyzing: boolean;
+  onSubmit: (form: FormData) => Promise<void>;
+  isSubmitting: boolean;
 };
 
-export function ReportForm({
-  selectedMode,
-  onModeChange,
-  onAnalyze,
-  isAnalyzing
-}: ReportFormProps) {
-  const defaultScenario = demoScenarios.find((scenario) => scenario.id === "monsoon")!;
-  const [text, setText] = useState(defaultScenario.text);
-  const [location, setLocation] = useState(defaultScenario.location);
-  const [imageDescription, setImageDescription] = useState(
-    sampleImageDescription(defaultScenario.mode)
-  );
-  const [imagePreview, setImagePreview] = useState<string | null>(null);
+export function ReportForm({ selectedMode, onModeChange, onSubmit, isSubmitting }: ReportFormProps) {
+  const [text, setText] = useState("");
+  const [location, setLocation] = useState("");
+  const [photo, setPhoto] = useState<File | null>(null);
+  const [photoPreview, setPhotoPreview] = useState<string | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
 
-  async function submitReport() {
-    await onAnalyze({
-      text,
-      imageDescription,
-      date: new Date().toISOString(),
-      approximateLocation: location,
-      weatherHint: getModeConfig(selectedMode).shortName,
-      userSelectedMode: selectedMode
-    });
+  async function submit(event: React.FormEvent) {
+    event.preventDefault();
+    const form = new FormData();
+    form.set("text", text);
+    form.set("location", location);
+    form.set("mode", selectedMode);
+
+    if (photo) {
+      form.set("photo", photo);
+    }
+
+    await onSubmit(form);
   }
 
   function loadScenario(scenario: DemoScenario) {
     setText(scenario.text);
     setLocation(scenario.location);
-    setImageDescription(sampleImageDescription(scenario.mode));
     onModeChange(scenario.mode);
   }
 
   function clear() {
     setText("");
     setLocation("");
-    setImageDescription("");
-    setImagePreview(null);
+    handlePhoto(null);
   }
 
-  function handleImage(file?: File) {
-    if (!file) {
-      setImagePreview(null);
-      return;
-    }
+  function handlePhoto(file: File | null) {
+    setPhoto(file);
+    setPhotoPreview((previous) => {
+      if (previous) {
+        URL.revokeObjectURL(previous);
+      }
 
-    setImagePreview(URL.createObjectURL(file));
-    setImageDescription(`Citizen uploaded a photo named ${file.name}.`);
+      return file ? URL.createObjectURL(file) : null;
+    });
+
+    if (!file && fileInputRef.current) {
+      fileInputRef.current.value = "";
+    }
   }
 
   return (
-    <section className="report-panel" aria-label="Report civic issue">
-      <div className="section-heading">
-        <span>New civic receipt</span>
-        <strong>{getModeConfig(selectedMode).name}</strong>
-      </div>
-
+    <form className="report-form" onSubmit={submit} aria-label="Report civic issue">
       <label className="field-label" htmlFor="report-text">
-        Complaint text or voice note transcript
+        What is happening? (Bengali, Hindi, or English)
       </label>
       <textarea
         id="report-text"
         value={text}
         onChange={(event) => setText(event.target.value)}
         placeholder="Water is knee deep near the drain. Plastic is blocking it. A light pole is sparking."
-        rows={5}
+        rows={3}
       />
 
       <div className="field-row">
@@ -90,61 +84,45 @@ export function ReportForm({
             placeholder="Behala, near Banamali Naskar Road"
           />
         </label>
-        <label className="field-label" htmlFor="image-upload">
-          Optional photo
+        <label className="field-label" htmlFor="photo-upload">
+          Photo (optional)
           <input
-            id="image-upload"
+            id="photo-upload"
+            ref={fileInputRef}
             type="file"
-            accept="image/*"
-            onChange={(event) => handleImage(event.target.files?.[0])}
+            accept="image/jpeg,image/png,image/webp,image/heic"
+            onChange={(event) => handlePhoto(event.target.files?.[0] ?? null)}
           />
         </label>
       </div>
 
-      {imagePreview ? (
+      {photoPreview ? (
         <div className="image-preview">
-          <Image
-            src={imagePreview}
-            alt="Uploaded civic issue preview"
-            width={64}
-            height={48}
-            unoptimized
-          />
-          <span>Photo preview attached</span>
+          <Image src={photoPreview} alt="Photo attached to this report" width={72} height={54} unoptimized />
+          <span>{photo?.name}</span>
+          <button type="button" className="quiet-action" onClick={() => handlePhoto(null)}>
+            Remove
+          </button>
         </div>
       ) : null}
 
-      <div className="demo-strip" aria-label="Load demo scenario">
+      <div className="action-row">
+        <button type="submit" className="primary-action" disabled={isSubmitting}>
+          {isSubmitting ? "Analyzing…" : `Submit ${getModeConfig(selectedMode).shortName} report`}
+        </button>
+        <button type="button" className="quiet-action" onClick={clear}>
+          Clear
+        </button>
+      </div>
+
+      <div className="demo-strip" aria-label="Try an example report">
+        <span>Try an example:</span>
         {demoScenarios.map((scenario) => (
           <button type="button" key={scenario.id} onClick={() => loadScenario(scenario)}>
             {scenario.label}
           </button>
         ))}
       </div>
-
-      <div className="action-row">
-        <button type="button" className="primary-action" onClick={submitReport} disabled={isAnalyzing}>
-          {isAnalyzing ? "Analyzing..." : "Analyze report"}
-        </button>
-        <button type="button" className="quiet-action" onClick={clear}>
-          Clear
-        </button>
-      </div>
-    </section>
+    </form>
   );
-}
-
-function sampleImageDescription(mode: SeasonalModeId) {
-  const descriptions: Record<SeasonalModeId, string> = {
-    everyday: "A narrow para lane with a broken civic asset visible.",
-    summer_heat_water: "Residents waiting near a public tap in bright heat.",
-    pre_monsoon_storm_prep: "A low wire and drain mouth visible before rainfall.",
-    monsoon_flood_dengue: "A flooded lane, blocked drain mouth, plastic waste, and a light pole.",
-    pujo_safety: "A temporary pandal exit with barricade, bamboo support, and hanging wire.",
-    post_pujo_cleanup: "Leftover bamboo, flex, and plastic blocking a drain after Puja.",
-    winter_air_dust: "Smoke and dust beside a broken market road.",
-    wetlands_watch: "Debris near a bheri edge and a blocked water channel."
-  };
-
-  return descriptions[mode];
 }
