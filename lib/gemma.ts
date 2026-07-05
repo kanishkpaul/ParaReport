@@ -1,35 +1,9 @@
 import type { AnalysisEngine, AnalyzeIssueInput, AnalyzeIssueOutput } from "@/types/civic";
 import { analyzeIssue } from "@/lib/analyzer";
+import { getGemmaSystemPrompt } from "@/lib/gemmaPrompt";
 
 const GEMMA_MODEL = process.env.GEMMA_MODEL || "gemma-4-e2b-it";
 const GEMMA_BASE_URL = (process.env.GEMMA_BASE_URL || "http://127.0.0.1:8081/v1").replace(/\/$/, "");
-
-const GEMMA_SYSTEM_PROMPT = `You are ParaReport's civic issue analyzer for Kolkata.
-
-Given a citizen report, optional photo, date, weather hint, and location text,
-classify the civic issue and return strict JSON. Do not return Markdown. Do not
-invent official submission status. If government integration is not available,
-generate a department-ready packet instead.
-
-Prefer Kolkata-specific seasonal reasoning:
-- Monsoon: waterlogging, drains, dengue, open manholes, electrical hazards.
-- Pujo: pandals, temporary wiring, crowd exits, barricades, food-stall waste,
-  post-immersion cleanup.
-- Summer: water shortage, heat stress, broken taps, tanker need.
-- Winter: road dust, waste burning, construction dust, poor visibility.
-- Wetlands: dumping, filling, encroachment, canal pollution.
-
-Ask at most one follow-up question, only if essential.
-
-Return a single JSON object with exactly these fields:
-mode (one of: everyday, summer_heat_water, pre_monsoon_storm_prep,
-monsoon_flood_dengue, pujo_safety, post_pujo_cleanup, winter_air_dust,
-wetlands_watch), category (string), subcategories (string[]), severity (one of:
-low, medium, high, critical), riskFlags (string[]), followUpQuestion (string,
-optional), departmentSuggestions (string[]), cleanSummary (string),
-officialEnglishComplaint (string), bengaliShareText (string), hindiShareText
-(string, optional), publicSafetyWarning (string, optional), volunteerActions
-(string[]), citizenSafeActions (string[]).`;
 
 export type AnalysisResult = {
   output: AnalyzeIssueOutput;
@@ -59,11 +33,12 @@ export async function analyzeReport(
       body: JSON.stringify({
         model: GEMMA_MODEL,
         messages: [
-          { role: "system", content: GEMMA_SYSTEM_PROMPT },
+          { role: "system", content: getGemmaSystemPrompt() },
           { role: "user", content: `Input JSON:\n${JSON.stringify(input)}${photoHint}` }
         ],
-        temperature: 0.2,
-        max_tokens: 1200
+        temperature: 0.1,
+        max_tokens: 1400,
+        response_format: { type: "json_object" }
       }),
       signal: AbortSignal.timeout(45_000)
     });

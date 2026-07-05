@@ -70,6 +70,21 @@ engine per field, so the receipt schema is always valid. Photo uploads are still
 stored and attached to receipts, but this GGUF path analyzes the text/location
 and attachment hint rather than image pixels.
 
+The local Gemma prompt is assembled from editable Markdown files in
+`prompts/gemma-local/`: `SYSTEM.md`, `SKILL.md`, `MEMORY.md`, and `SOUL.md`.
+Run the multilingual prompt check while `npm run gemma:serve` is running:
+
+```bash
+npm run gemma:test
+```
+
+For an app-level smoke test against a running Next server, set
+`PARAREPORT_BASE_URL` if needed and run:
+
+```bash
+npm run reports:test
+```
+
 ## API
 
 | Endpoint | Method | Purpose |
