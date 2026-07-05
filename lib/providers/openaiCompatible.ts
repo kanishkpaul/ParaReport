@@ -1,74 +1,79 @@
-import type { AnalysisEngine, AnalyzeIssueInput, AnalyzeIssueOutput } from "@/types/civic";
+import type { AnalyzeIssueInput, AnalyzeIssueOutput } from "@/types/civic";
 import { analyzeIssue } from "@/lib/analyzer";
 import { getGemmaSystemPrompt } from "@/lib/gemmaPrompt";
+import type { PhotoHint } from "@/lib/providers/types";
 
-const GEMMA_MODEL = process.env.GEMMA_MODEL || "gemma-4-e2b-it";
-const GEMMA_BASE_URL = (process.env.GEMMA_BASE_URL || "http://127.0.0.1:8081/v1").replace(/\/$/, "");
-
-export type AnalysisResult = {
-  output: AnalyzeIssueOutput;
-  engine: AnalysisEngine;
+export type OpenAICompatibleCall = {
+  baseUrl: string;
+  model: string;
+  apiKey?: string;
+  input: AnalyzeIssueInput;
+  photo?: PhotoHint;
+  timeoutMs?: number;
 };
 
-export async function analyzeReport(
-  input: AnalyzeIssueInput,
-  photo?: { base64: string; mimeType: string }
-): Promise<AnalysisResult> {
-  const enabled = process.env.GEMMA_ENABLED !== "false";
-
-  if (!enabled) {
-    return { output: analyzeIssue(input), engine: "rules" };
-  }
+// Calls any OpenAI-compatible /chat/completions endpoint (local Gemma via
+// llama.cpp, or a BYOK provider). Returns a fully-normalized analysis output,
+// or `null` on any failure (network, non-2xx, malformed JSON) so the caller can
+// fall back to the deterministic rules engine.
+export async function callOpenAICompatible(
+  call: OpenAICompatibleCall
+): Promise<AnalyzeIssueOutput | null> {
+  const baseUrl = call.baseUrl.replace(/\/$/, "");
+  const photoHint = call.photo
+    ? `\nPhoto: a citizen attached a ${call.photo.mimeType} image, but this text model cannot inspect pixels. Use the report text, location, and this attachment hint only.`
+    : "";
 
   try {
-    const photoHint = photo
-      ? `\nPhoto: a citizen attached a ${photo.mimeType} image, but this local text model cannot inspect pixels. Use the report text, location, and this attachment hint only.`
-      : "";
+    const headers: Record<string, string> = { "Content-Type": "application/json" };
 
-    const response = await fetch(`${GEMMA_BASE_URL}/chat/completions`, {
+    if (call.apiKey) {
+      headers.Authorization = `Bearer ${call.apiKey}`;
+    }
+
+    const response = await fetch(`${baseUrl}/chat/completions`, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
+      headers,
       body: JSON.stringify({
-        model: GEMMA_MODEL,
+        model: call.model,
         messages: [
           { role: "system", content: getGemmaSystemPrompt() },
-          { role: "user", content: `Input JSON:\n${JSON.stringify(input)}${photoHint}` }
+          { role: "user", content: `Input JSON:\n${JSON.stringify(call.input)}${photoHint}` }
         ],
         temperature: 0.1,
         max_tokens: 1400,
         response_format: { type: "json_object" }
       }),
-      signal: AbortSignal.timeout(45_000)
+      signal: AbortSignal.timeout(call.timeoutMs ?? 45_000)
     });
 
     if (!response.ok) {
-      console.error(`Local Gemma error ${response.status}; falling back to rules engine`);
-      return { output: analyzeIssue(input), engine: "rules" };
+      console.error(`Model endpoint error ${response.status}; falling back to rules engine`);
+      return null;
     }
 
     const json = await response.json();
     const text = json?.choices?.[0]?.message?.content;
 
     if (typeof text !== "string") {
-      return { output: analyzeIssue(input), engine: "rules" };
+      return null;
     }
 
     const candidate = extractJson(text);
 
     if (!candidate) {
-      return { output: analyzeIssue(input), engine: "rules" };
+      return null;
     }
 
-    return { output: normalizeGemmaOutput(candidate, input), engine: "gemma" };
+    return normalizeModelOutput(candidate, call.input);
   } catch (error) {
-    console.error("Local Gemma analysis failed; falling back to rules engine", error);
-    return { output: analyzeIssue(input), engine: "rules" };
+    console.error("Model analysis failed; falling back to rules engine", error);
+    return null;
   }
 }
 
-// llama.cpp may return fenced or prefixed JSON depending on the chat template.
+// OpenAI-compatible servers may return fenced or prefixed JSON depending on the
+// chat template, so grab the outermost object.
 function extractJson(text: string): Partial<AnalyzeIssueOutput> | undefined {
   const match = text.match(/\{[\s\S]*\}/);
 
@@ -95,7 +100,9 @@ const VALID_MODES = new Set([
 ]);
 const VALID_SEVERITIES = new Set(["low", "medium", "high", "critical"]);
 
-function normalizeGemmaOutput(
+// Merges a model's (possibly partial or malformed) JSON over a deterministic
+// rules-engine baseline so every field is always valid and populated.
+export function normalizeModelOutput(
   candidate: Partial<AnalyzeIssueOutput>,
   input: AnalyzeIssueInput
 ): AnalyzeIssueOutput {

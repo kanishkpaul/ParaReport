@@ -19,7 +19,10 @@ export type IssueStatus =
   | "duplicate"
   | "archived";
 
-export type AnalysisEngine = "gemma" | "rules";
+export type AnalysisEngine = "local-gemma" | "byok" | "rules";
+
+// Legacy engine values that may still exist in stored rows; mapped on read.
+export type StoredAnalysisEngine = AnalysisEngine | "gemma";
 
 export type CivicIssue = {
   id: string;
@@ -49,6 +52,12 @@ export type CivicIssue = {
   receipt: CivicReceipt;
   analysisEngine: AnalysisEngine;
   isSeed: boolean;
+  // Federation provenance. Locally-authored issues carry this node's id;
+  // issues imported from a peer carry the peer's node id + original issue id.
+  originNodeId?: string;
+  originIssueId?: string;
+  federatedAt?: string;
+  signature?: string;
 };
 
 export type ClusterSummary = {
@@ -143,4 +152,56 @@ export type ReportSubmissionResult = {
   receipt: CivicReceipt;
   cluster?: ClusterSummary;
   analysisEngine: AnalysisEngine;
+};
+
+// --- federation -------------------------------------------------------------
+
+// The canonical payload that gets signed and synced between nodes. It carries
+// enough of the issue to reconstruct a remote-origin CivicIssue on import,
+// plus the public receipt. It never contains BYOK keys or raw uploads.
+export type FederatedIssuePayload = {
+  originIssueId: string;
+  createdAt: string;
+  updatedAt: string;
+  mode: SeasonalModeId;
+  category: string;
+  severity: Severity;
+  status: IssueStatus;
+  locationText: string;
+  landmark?: string;
+  ward?: string;
+  borough?: string;
+  lat?: number;
+  lng?: number;
+  verificationCount: number;
+  unresolvedConfirmations: number;
+  analysisEngine: AnalysisEngine;
+  receipt: CivicReceipt;
+};
+
+// A signed envelope exchanged over the federation API.
+export type ReceiptEnvelope = {
+  version: 1;
+  originNodeId: string;
+  payload: FederatedIssuePayload;
+  // ISO timestamp the origin node emitted the envelope.
+  emittedAt: string;
+  // HMAC-SHA256 over the canonical JSON of { originNodeId, payload, emittedAt }.
+  signature: string;
+};
+
+export type FederationPeerStatus = {
+  url: string;
+  reachable: boolean;
+  lastCursor?: string;
+  imported: number;
+  error?: string;
+};
+
+export type FederationStatus = {
+  nodeId: string;
+  signingConfigured: boolean;
+  localReceipts: number;
+  remoteReceipts: number;
+  peers: string[];
 };

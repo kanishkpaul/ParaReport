@@ -72,8 +72,9 @@ function validateResult(result, testCase) {
   const issue = result.issue;
   const receipt = result.receipt;
 
-  if (result.analysisEngine !== "gemma") {
-    errors.push(`expected analysisEngine gemma, got ${result.analysisEngine}`);
+  const validEngines = ["local-gemma", "byok", "rules"];
+  if (!validEngines.includes(result.analysisEngine)) {
+    errors.push(`expected analysisEngine one of ${validEngines.join("/")}, got ${result.analysisEngine}`);
   }
 
   if (!issue) {

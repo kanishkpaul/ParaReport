@@ -64,11 +64,62 @@ GEMMA_BASE_URL=http://127.0.0.1:8082/v1 GEMMA_MODEL=my-alias npm run dev
 ```
 
 With the local server running, reports are analyzed by Gemma; every stored issue
-records which engine produced its analysis (`analysisEngine: "gemma" | "rules"`).
-Malformed model output or an unavailable local server falls back to the rules
-engine per field, so the receipt schema is always valid. Photo uploads are still
-stored and attached to receipts, but this GGUF path analyzes the text/location
-and attachment hint rather than image pixels.
+records which engine produced its analysis
+(`analysisEngine: "local-gemma" | "byok" | "rules"`). Malformed model output or an
+unavailable local server falls back to the rules engine per field, so the receipt
+schema is always valid. Photo uploads are still stored and attached to receipts,
+but this GGUF path analyzes the text/location and attachment hint rather than
+image pixels.
+
+### Bring your own model (BYOK)
+
+Hosted deployments let each visitor point ParaReport at any OpenAI-compatible
+endpoint. In the report form, open **Bring your own model** and enter a base URL,
+model name, and API key. The key is held only in that browser tab's
+`sessionStorage` and sent only on the analysis request via headers
+(`x-parareport-model-base-url`, `x-parareport-model`, `x-parareport-api-key`); it
+is never written to the database, logs, or federation payloads. If a BYOK call
+fails, analysis falls back to the deterministic rules engine (not local Gemma).
+
+### Storage backend
+
+The persistence layer sits behind an adapter (`lib/storage/`). The default
+`PARAREPORT_STORAGE=local` uses SQLite; `PARAREPORT_STORAGE=hosted` selects an
+external Postgres-compatible backend (interface defined, concrete driver not yet
+wired).
+
+### Federation (decentralized network)
+
+Independent ParaReport nodes can sync signed civic receipts with trusted peers,
+so no single server owns the network. Configure a node with:
+
+```bash
+PARAREPORT_NODE_ID=node-kolkata-a          # stable identity, used for provenance
+PARAREPORT_NODE_SECRET=shared-secret       # HMAC signing/verify key shared by the trusted mesh
+PARAREPORT_PEERS=https://node-b.example,https://node-c.example
+```
+
+Receipts are exchanged as signed envelopes (HMAC-SHA256 over canonical JSON);
+imports verify the signature, dedupe by origin node + issue id, and are marked
+remote-origin. Only the public receipt and structured metadata leave a node —
+never raw report text, photos, or BYOK material. Federation API:
+
+| Endpoint | Method | Purpose |
+| --- | --- | --- |
+| `/api/federation/receipts?since=<cursor>` | GET | Signed feed of local receipts after a cursor |
+| `/api/federation/receipts` | POST | Accept a batch of signed envelopes pushed by a peer |
+| `/api/federation/sync` | POST | Pull from configured peers (tolerant of offline peers; resumes from cursors) |
+| `/api/federation/status` | GET | Node id, signing status, local/remote receipt counts, peers |
+
+### Unit and integration tests
+
+```bash
+npm test
+```
+
+Runs the `node:test` suites in `tests/` (provider selection/fallback, BYOK
+request construction, storage adapter contract + legacy-DB migration, and
+signature create/verify/dedupe/tamper plus federation round-trip).
 
 The local Gemma prompt is assembled from editable Markdown files in
 `prompts/gemma-local/`: `SYSTEM.md`, `SKILL.md`, `MEMORY.md`, and `SOUL.md`.
@@ -97,11 +148,12 @@ npm run reports:test
 
 ## Deployment notes
 
-The app is a single Node server (SQLite file + local photo uploads), so deploy it
-anywhere with a persistent disk: Fly.io, Railway, Render, or a VPS. Serverless
-platforms without persistent storage need the storage layer (`lib/db.ts`,
-`lib/uploads.ts`) swapped for Postgres + object storage — both are isolated
-behind small modules for that reason.
+The app runs in two modes. As a **local node** it is a single Node server
+(SQLite file + local photo uploads), so deploy it anywhere with a persistent
+disk: Fly.io, Railway, Render, or a VPS. In **hosted mode** (`PARAREPORT_STORAGE=hosted`,
+e.g. on Vercel) the storage adapter targets external Postgres-compatible storage
+plus object storage; the adapter interface lives in `lib/storage/` and the photo
+layer in `lib/uploads.ts`. Either mode can join a federation of trusted nodes.
 
 ParaReport generates department-ready civic packets. It does not submit to KMC
 systems and never claims official complaint status.

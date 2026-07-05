@@ -1,65 +1,24 @@
 import { randomUUID } from "node:crypto";
-import { getDb, issueToRow, rowToIssue } from "@/lib/db";
+import { getStore } from "@/lib/storage";
+import type { ListFilters } from "@/lib/storage";
 import type {
   AnalyzeIssueOutput,
   CivicIssue,
   ClusterSummary,
   DashboardStats,
-  IssueStatus,
   SeasonalModeId,
   Severity
 } from "@/types/civic";
 import { createReceipt } from "@/lib/receipts";
 
-const OPEN_STATUSES: IssueStatus[] = ["new", "needs_more_info", "verified", "in_progress", "duplicate"];
-
-export type ListFilters = {
-  mode?: SeasonalModeId;
-  severity?: Severity;
-  status?: IssueStatus | "open";
-  groupId?: string;
-  limit?: number;
-};
+export type { ListFilters } from "@/lib/storage";
 
 export function listIssues(filters: ListFilters = {}): CivicIssue[] {
-  const where: string[] = [];
-  const params: Array<string | number> = [];
-
-  if (filters.mode) {
-    where.push("mode = ?");
-    params.push(filters.mode);
-  }
-
-  if (filters.severity) {
-    where.push("severity = ?");
-    params.push(filters.severity);
-  }
-
-  if (filters.status === "open") {
-    where.push(`status IN (${OPEN_STATUSES.map(() => "?").join(",")})`);
-    params.push(...OPEN_STATUSES);
-  } else if (filters.status) {
-    where.push("status = ?");
-    params.push(filters.status);
-  }
-
-  if (filters.groupId) {
-    where.push("duplicate_group_id = ?");
-    params.push(filters.groupId);
-  }
-
-  const sql = `SELECT * FROM issues ${where.length ? `WHERE ${where.join(" AND ")}` : ""} ORDER BY created_at DESC LIMIT ?`;
-  params.push(filters.limit ?? 100);
-
-  return (getDb().prepare(sql).all(...params) as Record<string, unknown>[]).map(rowToIssue);
+  return getStore().list(filters);
 }
 
 export function getIssue(id: string): CivicIssue | undefined {
-  const row = getDb().prepare("SELECT * FROM issues WHERE id = ?").get(id) as
-    | Record<string, unknown>
-    | undefined;
-
-  return row ? rowToIssue(row) : undefined;
+  return getStore().get(id);
 }
 
 export function createIssueFromAnalysis(params: {
@@ -102,44 +61,17 @@ export function createIssueFromAnalysis(params: {
     isSeed: false
   };
 
-  getDb()
-    .prepare(
-      `INSERT INTO issues (
-        id, title, raw_text, clean_summary, mode, category, subcategories, severity,
-        risk_flags, department_suggestions, location_text, landmark, ward, borough,
-        lat, lng, status, photo_url, created_at, updated_at, duplicate_group_id,
-        verification_count, unresolved_confirmations, fixed_proof_url, receipt,
-        analysis_engine, is_seed
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-    )
-    .run(...issueToRow(issue));
+  getStore().insert(issue);
 
   return issue;
 }
 
 export function confirmUnresolved(id: string): CivicIssue | undefined {
-  const now = new Date().toISOString();
-  getDb()
-    .prepare(
-      `UPDATE issues SET
-        unresolved_confirmations = unresolved_confirmations + 1,
-        verification_count = verification_count + 1,
-        status = CASE WHEN status = 'new' THEN 'verified' ELSE status END,
-        updated_at = ?
-      WHERE id = ?`
-    )
-    .run(now, id);
-
-  return getIssue(id);
+  return getStore().incrementUnresolved(id);
 }
 
 export function markFixed(id: string, proofUrl?: string): CivicIssue | undefined {
-  const now = new Date().toISOString();
-  getDb()
-    .prepare("UPDATE issues SET status = 'fixed', fixed_proof_url = COALESCE(?, fixed_proof_url), updated_at = ? WHERE id = ?")
-    .run(proofUrl ?? null, now, id);
-
-  return getIssue(id);
+  return getStore().markFixed(id, proofUrl);
 }
 
 // --- clustering -------------------------------------------------------------
@@ -163,18 +95,16 @@ export function findClusterMatch(
     return undefined;
   }
 
-  const candidates = getDb()
-    .prepare("SELECT location_text, duplicate_group_id, lat, lng FROM issues WHERE mode = ? AND duplicate_group_id IS NOT NULL ORDER BY created_at DESC LIMIT 300")
-    .all(mode) as Array<{ location_text: string; duplicate_group_id: string; lat: number | null; lng: number | null }>;
+  const candidates = getStore().clusterCandidates(mode, 300);
 
   for (const candidate of candidates) {
-    const candidateTokens = new Set(locationTokens(candidate.location_text));
+    const candidateTokens = new Set(locationTokens(candidate.locationText));
 
     if (tokens.some((token) => candidateTokens.has(token))) {
       return {
-        groupId: candidate.duplicate_group_id,
-        lat: candidate.lat ?? undefined,
-        lng: candidate.lng ?? undefined
+        groupId: candidate.groupId,
+        lat: candidate.lat,
+        lng: candidate.lng
       };
     }
   }

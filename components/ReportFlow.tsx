@@ -1,12 +1,15 @@
 "use client";
 
 import Link from "next/link";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ReportSubmissionResult, SeasonalModeId } from "@/types/civic";
 import { CivicReceiptCard } from "@/components/CivicReceiptCard";
 import { ModeSwitcher } from "@/components/ModeSwitcher";
 import { ReportForm } from "@/components/ReportForm";
+import { ByokSettings } from "@/components/ByokSettings";
 import { getDefaultMode } from "@/lib/modes";
+import { engineLabel } from "@/lib/engineLabels";
+import { byokHeaders, loadByokConfig, type ByokClientConfig } from "@/lib/byokClient";
 
 export function ReportFlow() {
   const defaultMode = useMemo(() => getDefaultMode(new Date()), []);
@@ -14,13 +17,25 @@ export function ReportFlow() {
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [result, setResult] = useState<ReportSubmissionResult | null>(null);
+  const [byok, setByok] = useState<ByokClientConfig | null>(null);
+
+  // Read after mount, not in a lazy initializer: sessionStorage is unavailable
+  // during SSR, and reading it at render time would cause a hydration mismatch.
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setByok(loadByokConfig());
+  }, []);
 
   async function handleSubmit(form: FormData) {
     setIsSubmitting(true);
     setError(null);
 
     try {
-      const response = await fetch("/api/reports", { method: "POST", body: form });
+      const response = await fetch("/api/reports", {
+        method: "POST",
+        body: form,
+        headers: byokHeaders(byok)
+      });
       const body = await response.json();
 
       if (!response.ok) {
@@ -48,6 +63,7 @@ export function ReportFlow() {
           isSubmitting={isSubmitting}
         />
         {error ? <p className="form-error" role="alert">{error}</p> : null}
+        <ByokSettings value={byok} onChange={setByok} />
       </section>
 
       {result ? (
@@ -55,7 +71,7 @@ export function ReportFlow() {
           <div className="result-meta">
             <p>
               Saved as <Link href={`/issues/${result.issue.id}`}>{result.issue.id}</Link> ·
-              analyzed by {result.analysisEngine === "gemma" ? "Gemma" : "the offline rules engine"}
+              analyzed by {engineLabel(result.analysisEngine)}
               {result.issue.status === "needs_more_info" && result.receipt ? " · needs one more detail" : ""}
             </p>
             {result.cluster && result.cluster.reportCount > 1 ? (

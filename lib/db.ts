@@ -35,13 +35,49 @@ CREATE TABLE IF NOT EXISTS issues (
   fixed_proof_url TEXT,
   receipt TEXT NOT NULL,
   analysis_engine TEXT NOT NULL DEFAULT 'rules',
-  is_seed INTEGER NOT NULL DEFAULT 0
+  is_seed INTEGER NOT NULL DEFAULT 0,
+  origin_node_id TEXT,
+  origin_issue_id TEXT,
+  federated_at TEXT,
+  signature TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_issues_mode ON issues(mode);
 CREATE INDEX IF NOT EXISTS idx_issues_status ON issues(status);
 CREATE INDEX IF NOT EXISTS idx_issues_group ON issues(duplicate_group_id);
 CREATE INDEX IF NOT EXISTS idx_issues_created ON issues(created_at);
+
+-- Cursor bookmarks for federation pulls, one row per peer URL.
+CREATE TABLE IF NOT EXISTS federation_cursors (
+  peer_url TEXT PRIMARY KEY,
+  cursor TEXT,
+  updated_at TEXT NOT NULL
+);
 `;
+
+// Columns added after the initial release; applied to existing databases that
+// predate them. SQLite has no ADD COLUMN IF NOT EXISTS, so we diff pragma output.
+const ADDED_COLUMNS: Array<{ name: string; ddl: string }> = [
+  { name: "origin_node_id", ddl: "ALTER TABLE issues ADD COLUMN origin_node_id TEXT" },
+  { name: "origin_issue_id", ddl: "ALTER TABLE issues ADD COLUMN origin_issue_id TEXT" },
+  { name: "federated_at", ddl: "ALTER TABLE issues ADD COLUMN federated_at TEXT" },
+  { name: "signature", ddl: "ALTER TABLE issues ADD COLUMN signature TEXT" }
+];
+
+function migrate(db: DatabaseSync) {
+  const existing = new Set(
+    (db.prepare("PRAGMA table_info(issues)").all() as Array<{ name: string }>).map((c) => c.name)
+  );
+
+  for (const column of ADDED_COLUMNS) {
+    if (!existing.has(column.name)) {
+      db.exec(column.ddl);
+    }
+  }
+
+  // Created after migration so it also applies to pre-existing databases whose
+  // origin_node_id column was only just added above.
+  db.exec("CREATE INDEX IF NOT EXISTS idx_issues_origin ON issues(origin_node_id)");
+}
 
 const globalDb = globalThis as unknown as { __parareportDb?: DatabaseSync };
 
@@ -51,6 +87,7 @@ export function getDb(): DatabaseSync {
     const db = new DatabaseSync(DB_PATH);
     db.exec("PRAGMA journal_mode = WAL;");
     db.exec(SCHEMA);
+    migrate(db);
     seedIfEmpty(db);
     globalDb.__parareportDb = db;
   }
@@ -65,20 +102,22 @@ function seedIfEmpty(db: DatabaseSync) {
     return;
   }
 
-  const insert = db.prepare(
-    `INSERT INTO issues (
-      id, title, raw_text, clean_summary, mode, category, subcategories, severity,
-      risk_flags, department_suggestions, location_text, landmark, ward, borough,
-      lat, lng, status, photo_url, created_at, updated_at, duplicate_group_id,
-      verification_count, unresolved_confirmations, fixed_proof_url, receipt,
-      analysis_engine, is_seed
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
-  );
+  const insert = db.prepare(ISSUE_INSERT_SQL);
 
   for (const issue of seedIssues) {
     insert.run(...issueToRow(issue));
   }
 }
+
+// Canonical column order for issue INSERTs, shared by seeding and the storage
+// adapter so issueToRow stays in lockstep with the placeholder list.
+export const ISSUE_INSERT_SQL = `INSERT INTO issues (
+  id, title, raw_text, clean_summary, mode, category, subcategories, severity,
+  risk_flags, department_suggestions, location_text, landmark, ward, borough,
+  lat, lng, status, photo_url, created_at, updated_at, duplicate_group_id,
+  verification_count, unresolved_confirmations, fixed_proof_url, receipt,
+  analysis_engine, is_seed, origin_node_id, origin_issue_id, federated_at, signature
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
 
 export function issueToRow(issue: CivicIssue) {
   return [
@@ -108,7 +147,11 @@ export function issueToRow(issue: CivicIssue) {
     issue.fixedProofUrl ?? null,
     JSON.stringify(issue.receipt),
     issue.analysisEngine,
-    issue.isSeed ? 1 : 0
+    issue.isSeed ? 1 : 0,
+    issue.originNodeId ?? null,
+    issue.originIssueId ?? null,
+    issue.federatedAt ?? null,
+    issue.signature ?? null
   ] as const;
 }
 
@@ -141,7 +184,25 @@ export function rowToIssue(row: IssueRow): CivicIssue {
     unresolvedConfirmations: row.unresolved_confirmations as number,
     fixedProofUrl: (row.fixed_proof_url as string) ?? undefined,
     receipt: JSON.parse(row.receipt as string),
-    analysisEngine: row.analysis_engine as CivicIssue["analysisEngine"],
-    isSeed: Boolean(row.is_seed)
+    analysisEngine: normalizeEngine(row.analysis_engine as string),
+    isSeed: Boolean(row.is_seed),
+    originNodeId: (row.origin_node_id as string) ?? undefined,
+    originIssueId: (row.origin_issue_id as string) ?? undefined,
+    federatedAt: (row.federated_at as string) ?? undefined,
+    signature: (row.signature as string) ?? undefined
   };
+}
+
+// Legacy rows stored the local model as "gemma"; expose it under the current
+// "local-gemma" engine id.
+function normalizeEngine(value: string): CivicIssue["analysisEngine"] {
+  if (value === "gemma") {
+    return "local-gemma";
+  }
+
+  if (value === "byok" || value === "local-gemma") {
+    return value;
+  }
+
+  return "rules";
 }

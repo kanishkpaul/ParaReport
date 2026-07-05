@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { analyzeReport } from "@/lib/gemma";
+import { analyzeReport, readByokConfig } from "@/lib/providers";
 import { createIssueFromAnalysis, getClusterSummary, listIssues } from "@/lib/store";
 import { savePhoto, UploadError, type SavedUpload } from "@/lib/uploads";
 import type {
@@ -76,10 +76,12 @@ export async function POST(request: Request) {
     userSelectedMode
   };
 
-  const { output, engine } = await analyzeReport(
-    input,
-    photo ? { base64: photo.base64, mimeType: photo.mimeType } : undefined
-  );
+  const byok = readByokConfig(request.headers);
+
+  const { output, engine } = await analyzeReport(input, {
+    photo: photo ? { base64: photo.base64, mimeType: photo.mimeType } : undefined,
+    byok
+  });
 
   const issue = createIssueFromAnalysis({
     rawText: text || "(photo-only report)",
