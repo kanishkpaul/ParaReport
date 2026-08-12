@@ -53,10 +53,9 @@ npm run gemma:serve
 npm run dev
 ```
 
-The Gemma script uses the local GGUF at
-`/Users/kanishk/Downloads/gemma-4-E2B-it-Q4_K_M.gguf` and exposes llama.cpp's
-OpenAI-compatible server at `http://127.0.0.1:8081/v1`. It starts Gemma with
-reasoning disabled so the app receives plain JSON. Override defaults with:
+The Gemma script uses the GGUF specified by `GEMMA_GGUF_PATH` and exposes an
+OpenAI-compatible local endpoint at `http://127.0.0.1:8081/v1`. It starts Gemma
+with reasoning disabled so the app receives plain JSON:
 
 ```bash
 GEMMA_GGUF_PATH=/path/to/model.gguf GEMMA_PORT=8082 GEMMA_MODEL=my-alias npm run gemma:serve
